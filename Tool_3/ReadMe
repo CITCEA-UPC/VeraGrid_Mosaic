@@ -1,0 +1,10 @@
+To reproduce the oscillation described in [1] and to obtain measurements of the base case, run:
+1. init_emt2.m (for initialization)
+2. interactions.slx (for the simulation)
+
+To run the simulations with current/voltage perturbations, run:
+1. init_and_run_perturbed_case.m (for initialization)
+2. grid_foll_grid.slx (with current perturbation, for grid identification)
+3. grid_foll_vsc.slx  (with voltage perturbation, for grid following VSC identification)                      
+
+[1] Zhang, Yifan, et al. "On the interaction in transient stability of two-inverter power systems containing GFL inverter using manifold method." arXiv preprint arXiv:2501.05994 (2025).
