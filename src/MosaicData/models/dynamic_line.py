@@ -1,0 +1,75 @@
+"""Named synchronous-q-d dynamic line model for the WSCC case."""
+
+from __future__ import annotations
+
+from typing import Any
+
+from .parameters import OMEGA_BASE
+
+from VeraGridEngine.Devices.Dynamic.rms_template import RmsModelTemplate
+from VeraGridEngine.Utils.Symbolic.block import Block
+from VeraGridEngine.Utils.Symbolic import symbolic as sym
+from VeraGridEngine.enumerations import DeviceType, VarPowerFlowReferenceType
+
+
+def build_wscc_dynamic_line_rms(vf: Any, *, resistance: float, reactance: float,
+                                 shunt_susceptance: float, name: str,
+                                 dynamic_shunts: bool = False) -> Any:
+    """Return a series-RL line with two current states and algebraic powers."""
+
+    c = vf.add_const
+    vmf = vf.add_var(f"{name}.Vmf", reference=VarPowerFlowReferenceType.Vmf)
+    vaf = vf.add_var(f"{name}.Vaf", reference=VarPowerFlowReferenceType.Vaf)
+    vmt = vf.add_var(f"{name}.Vmt", reference=VarPowerFlowReferenceType.Vmt)
+    vat = vf.add_var(f"{name}.Vat", reference=VarPowerFlowReferenceType.Vat)
+    pf = vf.add_var(f"{name}.Pf", reference=VarPowerFlowReferenceType.Pf)
+    pt = vf.add_var(f"{name}.Pt", reference=VarPowerFlowReferenceType.Pt)
+    qf = vf.add_var(f"{name}.Qf", reference=VarPowerFlowReferenceType.Qf)
+    qt = vf.add_var(f"{name}.Qt", reference=VarPowerFlowReferenceType.Qt)
+    iq = vf.add_var(f"{name}.iq")
+    id_ = vf.add_var(f"{name}.id")
+
+    vfq, vfd = vmf*sym.cos(vaf), -vmf*sym.sin(vaf)
+    vtq, vtd = vmt*sym.cos(vat), -vmt*sym.sin(vat)
+    half_b = c(0.0 if dynamic_shunts else shunt_susceptance/2.0)
+    ifq, ifd = iq+half_b*vfd, id_-half_b*vfq
+    itq, itd = -iq+half_b*vtd, -id_-half_b*vtq
+    # Initialize the series current from the terminal-voltage difference.
+    # PF branch powers include charging, whereas the runtime line may assign
+    # that charging to separate bus capacitors. Voltage-based initialization
+    # works for both arrangements and avoids a P/Q-to-current dependency cycle.
+    dvq, dvd = vfq-vtq, vfd-vtd
+    impedance_squared = c(resistance*resistance+reactance*reactance)
+    iq0 = (c(resistance)*dvq-c(reactance)*dvd)/impedance_squared
+    id0 = (c(reactance)*dvq+c(resistance)*dvd)/impedance_squared
+
+    state_eqs = [
+        c(OMEGA_BASE/reactance)*(vfq-vtq-c(resistance)*iq-c(reactance)*id_),
+        c(OMEGA_BASE/reactance)*(vfd-vtd-c(resistance)*id_+c(reactance)*iq),
+    ]
+    algebraic_eqs = [
+        pf-(vfq*ifq+vfd*ifd),
+        qf-(vfq*ifd-vfd*ifq),
+        pt-(vtq*itq+vtd*itd),
+        qt-(vtq*itd-vtd*itq),
+    ]
+    block = Block(
+        state_vars=[iq, id_], state_eqs=state_eqs,
+        algebraic_vars=[pf, qf, pt, qt], algebraic_eqs=algebraic_eqs,
+        init_eqs={iq: iq0, id_: id0,
+                  pf: vfq*ifq+vfd*ifd,
+                  qf: vfq*ifd-vfd*ifq,
+                  pt: vtq*itq+vtd*itd,
+                  qt: vtq*itd-vtd*itq},
+        in_vars=[vmf, vaf, vmt, vat], out_vars=[pf, pt, qf, qt],
+        external_mapping={
+            VarPowerFlowReferenceType.Vmf: vmf, VarPowerFlowReferenceType.Vaf: vaf,
+            VarPowerFlowReferenceType.Vmt: vmt, VarPowerFlowReferenceType.Vat: vat,
+            VarPowerFlowReferenceType.Pf: pf, VarPowerFlowReferenceType.Pt: pt,
+            VarPowerFlowReferenceType.Qf: qf, VarPowerFlowReferenceType.Qt: qt,
+        }, name=name,
+    )
+    template = RmsModelTemplate(name=name)
+    template.tpe = DeviceType.LineDevice
+    template.block = block
+    return template
